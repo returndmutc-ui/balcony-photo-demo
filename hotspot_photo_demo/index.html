@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>阳台摄像头 · 照片接收</title>
+<style>
+  :root { color-scheme: light; font: 16px/1.55 system-ui, sans-serif; color: #19332d; background: #eef4f0; }
+  * { box-sizing: border-box; }
+  body { max-width: 740px; margin: 0 auto; padding: 28px 18px; }
+  h1 { margin: 0 0 14px; font-size: 1.8rem; }
+  form, figure { margin: 0 0 16px; background: white; border: 1px solid #d7e4db; border-radius: 12px; padding: 18px; }
+  label { display: block; font-weight: 650; margin-bottom: 5px; }
+  input { width: 100%; margin: 0 0 12px; font: inherit; border: 1px solid #9db4a7; border-radius: 7px; padding: 8px 10px; }
+  button { font: inherit; font-weight: 650; color: white; background: #206450; border: 0; border-radius: 7px; padding: 8px 14px; cursor: pointer; }
+  button:disabled { opacity: .65; cursor: wait; }
+  #status { margin: 10px 0 0; }
+  img { display: block; width: 100%; height: auto; border-radius: 7px; }
+  figcaption { margin-top: 9px; }
+</style>
+<main>
+  <h1>阳台摄像头 · 照片接收</h1>
+  <form id="viewer">
+    <label for="receiver">照片接收端地址</label>
+    <input id="receiver" type="url" inputmode="url" placeholder="留空使用当前网站">
+    <label for="token">照片查看密钥</label>
+    <input id="token" type="password" autocomplete="off" required>
+    <button id="refresh" type="submit">查看最新照片</button>
+    <p id="status" role="status">输入查看密钥后点击按钮。</p>
+  </form>
+  <figure id="preview" hidden>
+    <img id="photo" alt="阳台摄像头最近上传的照片">
+    <figcaption id="time"></figcaption>
+  </figure>
+</main>
+<script>
+  const byId = id => document.getElementById(id);
+  let photoUrl;
+
+  byId('viewer').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = byId('refresh');
+    const status = byId('status');
+    button.disabled = true;
+    status.textContent = '正在读取照片…';
+    try {
+      const input = byId('receiver').value.trim();
+      const receiver = new URL(input || location.origin);
+      if (!['http:', 'https:'].includes(receiver.protocol) || receiver.username || receiver.password) {
+        throw new Error('请填写有效的接收端地址。');
+      }
+      if (receiver.origin !== location.origin && receiver.protocol !== 'https:') {
+        throw new Error('跨网站查看需要 HTTPS 接收端。局域网测试时请直接打开接收端页面。');
+      }
+      const response = await fetch(new URL('/api/photo', receiver), {
+        headers: { Authorization: 'Bearer ' + byId('token').value.trim() },
+        redirect: 'error',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status === 401) throw new Error('请检查照片查看密钥。');
+      if (response.status === 404) throw new Error('还没有收到照片。请让摄像头先上传一张。');
+      if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'image/jpeg') {
+        throw new Error('接收端没有返回 JPEG 照片，请检查地址。');
+      }
+      const newPhotoUrl = URL.createObjectURL(await response.blob());
+      byId('photo').src = newPhotoUrl;
+      if (photoUrl) URL.revokeObjectURL(photoUrl);
+      photoUrl = newPhotoUrl;
+      const received = response.headers.get('X-Captured-At');
+      byId('time').textContent = received ? '服务器收到照片的时间 ' + new Date(received).toLocaleString('zh-CN') : '';
+      byId('preview').hidden = false;
+      status.textContent = '已收到照片。';
+    } catch (error) {
+      status.textContent = error instanceof TypeError || error.name === 'TimeoutError'
+        ? '无法连接接收端，请检查地址和网络。' : error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
